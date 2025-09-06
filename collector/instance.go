@@ -21,14 +21,14 @@ import (
 	"github.com/blang/semver/v4"
 )
 
-type instance struct {
+type Instance struct {
 	dsn     string
 	db      *sql.DB
 	version semver.Version
 }
 
-func NewInstance(dsn string) (*instance, error) {
-	i := &instance{
+func NewInstance(dsn string) (*Instance, error) {
+	i := &Instance{
 		dsn: dsn,
 	}
 
@@ -44,13 +44,13 @@ func NewInstance(dsn string) (*instance, error) {
 }
 
 // copy returns a copy of the instance.
-func (i *instance) copy() *instance {
-	return &instance{
+func (i *Instance) copy() *Instance {
+	return &Instance{
 		dsn: i.dsn,
 	}
 }
 
-func (i *instance) setup() error {
+func (i *Instance) setup() error {
 	db, err := sql.Open("postgres", i.dsn)
 	if err != nil {
 		return err
@@ -69,9 +69,9 @@ func (i *instance) setup() error {
 }
 
 // SetupWithConnection sets up the instance with an existing database connection.
-func (i *instance) SetupWithConnection(db *sql.DB) error {
+func (i *Instance) SetupWithConnection(db *sql.DB) error {
 	i.db = db
-	
+
 	version, err := queryVersion(i.db)
 	if err != nil {
 		return fmt.Errorf("error querying postgresql version: %w", err)
@@ -80,11 +80,11 @@ func (i *instance) SetupWithConnection(db *sql.DB) error {
 	return nil
 }
 
-func (i *instance) getDB() *sql.DB {
+func (i *Instance) getDB() *sql.DB {
 	return i.db
 }
 
-func (i *instance) Close() error {
+func (i *Instance) Close() error {
 	return i.db.Close()
 }
 
