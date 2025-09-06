@@ -93,7 +93,8 @@ type PostgresCollector struct {
 	logger        *slog.Logger
 	scrapeTimeout time.Duration
 
-	instance *instance
+	instance           *instance
+	instancePerCollect bool
 }
 
 type Option func(*PostgresCollector) error
@@ -106,10 +107,19 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithInstancePerCollect configures whether to create a new instance per Collect call.
+func WithInstancePerCollect() Option {
+	return func(p *PostgresCollector) error {
+		p.instancePerCollect = true
+		return nil
+	}
+}
+
 // NewPostgresCollector creates a new PostgresCollector.
-func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, dsn string, filters []string, options ...Option) (*PostgresCollector, error) {
+func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, instance *instance, filters []string, options ...Option) (*PostgresCollector, error) {
 	p := &PostgresCollector{
-		logger: logger,
+		logger:   logger,
+		instance: instance,
 	}
 	// Apply options to customize the collector
 	for _, o := range options {
@@ -154,16 +164,6 @@ func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, dsn st
 
 	p.Collectors = collectors
 
-	if dsn == "" {
-		return nil, errors.New("empty dsn")
-	}
-
-	instance, err := newInstance(dsn)
-	if err != nil {
-		return nil, err
-	}
-	p.instance = instance
-
 	return p, nil
 }
 
@@ -184,15 +184,21 @@ func (p PostgresCollector) Collect(ch chan<- prometheus.Metric) {
 		ctx = context.Background()
 	}
 
-	// copy the instance so that concurrent scrapes have independent instances
-	inst := p.instance.copy()
+	var inst *instance
 
-	// Set up the database connection for the collector.
-	err := inst.setup()
-	defer inst.Close()
-	if err != nil {
-		p.logger.Error("Error opening connection to database", "err", err)
-		return
+	if p.instancePerCollect {
+		// copy the instance so that concurrent scrapes have independent instances
+		inst = p.instance.copy()
+		// Set up the database connection for the collector.
+		err := inst.setup()
+		if err != nil {
+			p.logger.Error("Error opening connection to database", "err", err)
+			return
+		}
+		defer inst.Close()
+	} else {
+		// Use the shared instance directly
+		inst = p.instance
 	}
 
 	wg := sync.WaitGroup{}
@@ -204,10 +210,6 @@ func (p PostgresCollector) Collect(ch chan<- prometheus.Metric) {
 		}(name, c)
 	}
 	wg.Wait()
-}
-
-func (p *PostgresCollector) Close() error {
-	return p.instance.Close()
 }
 
 func execute(ctx context.Context, name string, c Collector, instance *instance, ch chan<- prometheus.Metric, logger *slog.Logger) {

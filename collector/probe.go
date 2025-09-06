@@ -57,7 +57,7 @@ func NewProbeCollector(logger *slog.Logger, excludeDatabases []string, registry 
 		}
 	}
 
-	instance, err := newInstance(dsn.GetConnectionString())
+	instance, err := NewInstance(dsn.GetConnectionString())
 	if err != nil {
 		return nil, err
 	}

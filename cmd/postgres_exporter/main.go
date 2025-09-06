@@ -133,17 +133,37 @@ func main() {
 		dsn = dsns[0]
 	}
 
-	pe, err := collector.NewPostgresCollector(
-		logger,
-		excludedDatabases,
-		dsn,
-		[]string{},
-		collector.WithTimeout(*scrapeTimeout),
-	)
-	if err != nil {
-		logger.Warn("Failed to create PostgresCollector", "err", err.Error())
-	} else {
-		prometheus.MustRegister(pe)
+	if dsn != "" {
+		// Get the server connection to share with collectors
+		server, err := exporter.servers.GetServer(dsn)
+		if err != nil {
+			logger.Warn("Failed to get server for collectors", "err", err.Error())
+		} else {
+			// Create instance with shared connection from server
+			instance, err := collector.NewInstance(dsn)
+			if err != nil {
+				logger.Warn("Failed to create instance", "err", err.Error())
+			} else {
+				err = instance.SetupWithConnection(server.db)
+				if err != nil {
+					logger.Warn("Failed to setup shared instance", "err", err.Error())
+				} else {
+					// Create collector with shared instance (instancePerCollect defaults to false)
+					pe, err := collector.NewPostgresCollector(
+						logger,
+						excludedDatabases,
+						instance,
+						[]string{},
+						collector.WithTimeout(*scrapeTimeout),
+					)
+					if err != nil {
+						logger.Warn("Failed to create PostgresCollector", "err", err.Error())
+					} else {
+						prometheus.MustRegister(pe)
+					}
+				}
+			}
+		}
 	}
 
 	http.Handle(*metricsPath, promhttp.Handler())
