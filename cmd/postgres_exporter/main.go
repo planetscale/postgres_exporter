@@ -15,9 +15,11 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus-community/postgres_exporter/collector"
@@ -31,6 +33,65 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/prometheus/exporter-toolkit/web/kingpinflag"
 )
+
+func registerPostgresCollector(dsn string, exporter *Exporter, logger *slog.Logger, excludedDatabases []string, scrapeTimeout time.Duration, concurrentScrape bool) {
+	if dsn == "" {
+		return
+	}
+
+	var instance *collector.Instance
+	var opts []collector.Option
+
+	if concurrentScrape {
+		// Original behavior: dedicated instance for collector, creates new connection per scrape
+		inst, err := collector.NewInstance(dsn)
+		if err != nil {
+			logger.Warn("Failed to create instance", "err", err.Error())
+			return
+		}
+		instance = inst
+		// Add option to create new instance per collect
+		opts = append(opts, collector.WithInstancePerCollect())
+	} else {
+		// New optimized behavior: share connection from server
+		server, err := exporter.servers.GetServer(dsn)
+		if err != nil {
+			logger.Warn("Failed to get server for collectors", "err", err.Error())
+			return
+		}
+
+		inst, err := collector.NewInstance(dsn)
+		if err != nil {
+			logger.Warn("Failed to create instance", "err", err.Error())
+			return
+		}
+
+		err = inst.SetupWithConnection(server.db)
+		if err != nil {
+			logger.Warn("Failed to setup shared instance", "err", err.Error())
+			return
+		}
+		instance = inst
+	}
+
+	// Add timeout option
+	opts = append(opts, collector.WithTimeout(scrapeTimeout))
+
+	// Create collector
+	pe, err := collector.NewPostgresCollector(
+		logger,
+		excludedDatabases,
+		instance,
+		[]string{},
+		opts...,
+	)
+	if err != nil {
+		logger.Warn("Failed to create PostgresCollector", "err", err.Error())
+		return
+	}
+
+	prometheus.MustRegister(pe)
+}
 
 var (
 	c = config.Handler{
@@ -50,6 +111,7 @@ var (
 	includeDatabases       = kingpin.Flag("include-databases", "A list of databases to include when autoDiscoverDatabases is enabled (DEPRECATED)").Default("").Envar("PG_EXPORTER_INCLUDE_DATABASES").String()
 	metricPrefix           = kingpin.Flag("metric-prefix", "A metric prefix can be used to have non-default (not \"pg\") prefixes for each of the metrics").Default("pg").Envar("PG_EXPORTER_METRIC_PREFIX").String()
 	scrapeTimeout          = kingpin.Flag("scrape-timeout", "Maximum time for a scrape to complete before timing out (0 = no timeout)").Default("0").Envar("PG_EXPORTER_SCRAPE_TIMEOUT").Duration()
+	concurrentScrape       = kingpin.Flag("concurrent-scrape", "Use dedicated instance for collector allowing concurrent scrapes (default: true for backward compatibility)").Default("true").Envar("PG_EXPORTER_CONCURRENT_SCRAPE").Bool()
 	logger                 = promslog.NewNopLogger()
 )
 
@@ -133,38 +195,7 @@ func main() {
 		dsn = dsns[0]
 	}
 
-	if dsn != "" {
-		// Get the server connection to share with collectors
-		server, err := exporter.servers.GetServer(dsn)
-		if err != nil {
-			logger.Warn("Failed to get server for collectors", "err", err.Error())
-		} else {
-			// Create instance with shared connection from server
-			instance, err := collector.NewInstance(dsn)
-			if err != nil {
-				logger.Warn("Failed to create instance", "err", err.Error())
-			} else {
-				err = instance.SetupWithConnection(server.db)
-				if err != nil {
-					logger.Warn("Failed to setup shared instance", "err", err.Error())
-				} else {
-					// Create collector with shared instance (instancePerCollect defaults to false)
-					pe, err := collector.NewPostgresCollector(
-						logger,
-						excludedDatabases,
-						instance,
-						[]string{},
-						collector.WithTimeout(*scrapeTimeout),
-					)
-					if err != nil {
-						logger.Warn("Failed to create PostgresCollector", "err", err.Error())
-					} else {
-						prometheus.MustRegister(pe)
-					}
-				}
-			}
-		}
-	}
+	registerPostgresCollector(dsn, exporter, logger, excludedDatabases, *scrapeTimeout, *concurrentScrape)
 
 	http.Handle(*metricsPath, promhttp.Handler())
 

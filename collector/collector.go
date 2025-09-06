@@ -59,7 +59,7 @@ var (
 )
 
 type Collector interface {
-	Update(ctx context.Context, instance *instance, ch chan<- prometheus.Metric) error
+	Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error
 }
 
 type collectorConfig struct {
@@ -93,7 +93,7 @@ type PostgresCollector struct {
 	logger        *slog.Logger
 	scrapeTimeout time.Duration
 
-	instance           *instance
+	instance           *Instance
 	instancePerCollect bool
 }
 
@@ -116,7 +116,7 @@ func WithInstancePerCollect() Option {
 }
 
 // NewPostgresCollector creates a new PostgresCollector.
-func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, instance *instance, filters []string, options ...Option) (*PostgresCollector, error) {
+func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, instance *Instance, filters []string, options ...Option) (*PostgresCollector, error) {
 	p := &PostgresCollector{
 		logger:   logger,
 		instance: instance,
@@ -184,7 +184,7 @@ func (p PostgresCollector) Collect(ch chan<- prometheus.Metric) {
 		ctx = context.Background()
 	}
 
-	var inst *instance
+	var inst *Instance
 
 	if p.instancePerCollect {
 		// copy the instance so that concurrent scrapes have independent instances
@@ -212,7 +212,7 @@ func (p PostgresCollector) Collect(ch chan<- prometheus.Metric) {
 	wg.Wait()
 }
 
-func execute(ctx context.Context, name string, c Collector, instance *instance, ch chan<- prometheus.Metric, logger *slog.Logger) {
+func execute(ctx context.Context, name string, c Collector, instance *Instance, ch chan<- prometheus.Metric, logger *slog.Logger) {
 	begin := time.Now()
 	err := c.Update(ctx, instance, ch)
 	duration := time.Since(begin)
