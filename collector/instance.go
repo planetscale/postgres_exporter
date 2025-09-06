@@ -27,7 +27,7 @@ type instance struct {
 	version semver.Version
 }
 
-func newInstance(dsn string) (*instance, error) {
+func NewInstance(dsn string) (*instance, error) {
 	i := &instance{
 		dsn: dsn,
 	}
@@ -65,6 +65,18 @@ func (i *instance) setup() error {
 	} else {
 		i.version = version
 	}
+	return nil
+}
+
+// SetupWithConnection sets up the instance with an existing database connection.
+func (i *instance) SetupWithConnection(db *sql.DB) error {
+	i.db = db
+	
+	version, err := queryVersion(i.db)
+	if err != nil {
+		return fmt.Errorf("error querying postgresql version: %w", err)
+	}
+	i.version = version
 	return nil
 }
 
