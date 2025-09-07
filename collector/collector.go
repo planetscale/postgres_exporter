@@ -89,12 +89,10 @@ func registerCollector(name string, isDefaultEnabled bool, createFunc func(colle
 
 // PostgresCollector implements the prometheus.Collector interface.
 type PostgresCollector struct {
-	Collectors    map[string]Collector
-	logger        *slog.Logger
-	scrapeTimeout time.Duration
-
-	instance           *Instance
-	instancePerCollect bool
+	Collectors      map[string]Collector
+	logger          *slog.Logger
+	scrapeTimeout   time.Duration
+	instanceFactory InstanceFactory
 }
 
 type Option func(*PostgresCollector) error
@@ -107,19 +105,11 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithInstancePerCollect configures whether to create a new instance per Collect call.
-func WithInstancePerCollect() Option {
-	return func(p *PostgresCollector) error {
-		p.instancePerCollect = true
-		return nil
-	}
-}
-
 // NewPostgresCollector creates a new PostgresCollector.
-func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, instance *Instance, filters []string, options ...Option) (*PostgresCollector, error) {
+func NewPostgresCollector(logger *slog.Logger, excludeDatabases []string, factory InstanceFactory, filters []string, options ...Option) (*PostgresCollector, error) {
 	p := &PostgresCollector{
-		logger:   logger,
-		instance: instance,
+		logger:          logger,
+		instanceFactory: factory,
 	}
 	// Apply options to customize the collector
 	for _, o := range options {
@@ -184,22 +174,13 @@ func (p PostgresCollector) Collect(ch chan<- prometheus.Metric) {
 		ctx = context.Background()
 	}
 
-	var inst *Instance
-	
-	if p.instancePerCollect {
-		// copy the instance so that concurrent scrapes have independent instances
-		inst = p.instance.copy()
-		// Set up the database connection for the collector.
-		err := inst.setup()
-		if err != nil {
-			p.logger.Error("Error opening connection to database", "err", err)
-			return
-		}
-		defer inst.Close()
-	} else {
-		// Use the shared instance directly
-		inst = p.instance
+	// Use the factory to get an instance
+	inst, err := p.instanceFactory()
+	if err != nil {
+		p.logger.Error("Error creating instance", "err", err)
+		return
 	}
+	defer inst.Close() // Always safe - closeDB flag determines if connection is actually closed
 
 	wg := sync.WaitGroup{}
 	wg.Add(len(p.Collectors))

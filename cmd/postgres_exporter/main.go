@@ -39,51 +39,45 @@ func registerPostgresCollector(dsn string, exporter *Exporter, logger *slog.Logg
 		return
 	}
 
-	var instance *collector.Instance
-	var opts []collector.Option
+	var factory collector.InstanceFactory
 
 	if concurrentScrape {
 		// Original behavior: dedicated instance for collector, creates new connection per scrape
-		inst, err := collector.NewInstance(dsn)
+		template, err := collector.NewInstance(dsn)
 		if err != nil {
-			logger.Warn("Failed to create instance", "err", err.Error())
+			logger.Warn("Failed to create template instance", "err", err.Error())
 			return
 		}
-		instance = inst
-		// Add option to create new instance per collect
-		opts = append(opts, collector.WithInstancePerCollect())
+		factory = collector.InstanceFactoryFromTemplate(template)
 	} else {
-		// New optimized behavior: share connection from server
-		server, err := exporter.servers.GetServer(dsn)
-		if err != nil {
-			logger.Warn("Failed to get server for collectors", "err", err.Error())
-			return
-		}
+		// New optimized behavior: share connection from server with resilience
+		factory = func() (*collector.Instance, error) {
+			server, err := exporter.servers.GetServer(dsn)
+			if err != nil {
+				return nil, err
+			}
 
-		inst, err := collector.NewInstance(dsn)
-		if err != nil {
-			logger.Warn("Failed to create instance", "err", err.Error())
-			return
-		}
+			inst, err := collector.NewInstance(dsn)
+			if err != nil {
+				return nil, err
+			}
 
-		err = inst.SetupWithConnection(server.db)
-		if err != nil {
-			logger.Warn("Failed to setup shared instance", "err", err.Error())
-			return
+			err = inst.SetupWithConnection(server.db)
+			if err != nil {
+				return nil, err
+			}
+
+			return inst, nil
 		}
-		instance = inst
 	}
 
-	// Add timeout option
-	opts = append(opts, collector.WithTimeout(scrapeTimeout))
-
-	// Create collector
+	// Create collector with factory
 	pe, err := collector.NewPostgresCollector(
 		logger,
 		excludedDatabases,
-		instance,
+		factory,
 		[]string{},
-		opts...,
+		collector.WithTimeout(scrapeTimeout),
 	)
 	if err != nil {
 		logger.Warn("Failed to create PostgresCollector", "err", err.Error())
