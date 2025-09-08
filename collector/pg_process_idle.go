@@ -45,7 +45,7 @@ var pgProcessIdleSeconds = prometheus.NewDesc(
 )
 
 func (PGProcessIdleCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.getDB()
+	db := instance.GetDB()
 	row := db.QueryRowContext(ctx,
 		`WITH
 			metrics AS (

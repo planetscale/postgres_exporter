@@ -224,7 +224,7 @@ func statDatabaseQuery(columns []string) string {
 }
 
 func (c *PGStatDatabaseCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.getDB()
+	db := instance.GetDB()
 
 	columns := []string{
 		"datid",

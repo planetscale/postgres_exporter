@@ -60,7 +60,7 @@ var (
 )
 
 func (c *PGStatioUserIndexesCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.getDB()
+	db := instance.GetDB()
 	rows, err := db.QueryContext(ctx,
 		statioUserIndexesQuery)
 

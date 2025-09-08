@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/prometheus-community/postgres_exporter/collector"
@@ -34,16 +33,16 @@ import (
 	"github.com/prometheus/exporter-toolkit/web/kingpinflag"
 )
 
-func registerPostgresCollector(dsn string, exporter *Exporter, logger *slog.Logger, excludedDatabases []string, scrapeTimeout time.Duration, concurrentScrape bool) {
+func registerPostgresCollector(dsn string, exporter *Exporter, logger *slog.Logger, excludedDatabases []string) {
 	if dsn == "" {
 		return
 	}
 
 	var factory collector.InstanceFactory
 
-	if concurrentScrape {
+	if *concurrentScrape {
 		// Original behavior: dedicated instance for collector, creates new connection per scrape
-		template, err := collector.NewInstance(dsn)
+		template, err := collector.NewInstance(dsn, *statementTimeout)
 		if err != nil {
 			logger.Warn("Failed to create template instance", "err", err.Error())
 			return
@@ -57,7 +56,7 @@ func registerPostgresCollector(dsn string, exporter *Exporter, logger *slog.Logg
 				return nil, err
 			}
 
-			inst, err := collector.NewInstance(dsn)
+			inst, err := collector.NewInstance(dsn, *statementTimeout)
 			if err != nil {
 				return nil, err
 			}
@@ -77,7 +76,7 @@ func registerPostgresCollector(dsn string, exporter *Exporter, logger *slog.Logg
 		excludedDatabases,
 		factory,
 		[]string{},
-		collector.WithTimeout(scrapeTimeout),
+		collector.WithTimeout(*scrapeTimeout),
 	)
 	if err != nil {
 		logger.Warn("Failed to create PostgresCollector", "err", err.Error())
@@ -105,6 +104,7 @@ var (
 	includeDatabases       = kingpin.Flag("include-databases", "A list of databases to include when autoDiscoverDatabases is enabled (DEPRECATED)").Default("").Envar("PG_EXPORTER_INCLUDE_DATABASES").String()
 	metricPrefix           = kingpin.Flag("metric-prefix", "A metric prefix can be used to have non-default (not \"pg\") prefixes for each of the metrics").Default("pg").Envar("PG_EXPORTER_METRIC_PREFIX").String()
 	scrapeTimeout          = kingpin.Flag("scrape-timeout", "Maximum time for a scrape to complete before timing out (0 = no timeout)").Default("0").Envar("PG_EXPORTER_SCRAPE_TIMEOUT").Duration()
+	statementTimeout       = kingpin.Flag("statement-timeout", "PostgreSQL statement timeout for queries (0 = no timeout)").Default("0").Envar("PG_EXPORTER_STATEMENT_TIMEOUT").Duration()
 	concurrentScrape       = kingpin.Flag("concurrent-scrape", "Use dedicated database connection in each collection pass, allowing for concurrent scrapes").Default("true").Envar("PG_EXPORTER_CONCURRENT_SCRAPE").Bool()
 	logger                 = promslog.NewNopLogger()
 )
@@ -189,7 +189,7 @@ func main() {
 		dsn = dsns[0]
 	}
 
-	registerPostgresCollector(dsn, exporter, logger, excludedDatabases, *scrapeTimeout, *concurrentScrape)
+	registerPostgresCollector(dsn, exporter, logger, excludedDatabases)
 
 	http.Handle(*metricsPath, promhttp.Handler())
 

@@ -108,7 +108,7 @@ var (
 )
 
 func (c PGStatCheckpointerCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.getDB()
+	db := instance.GetDB()
 
 	before17 := instance.version.LT(semver.MustParse("17.0.0"))
 	if before17 {

@@ -115,7 +115,7 @@ func (PGReplicationSlotCollector) Update(ctx context.Context, instance *Instance
 		query = pgReplicationSlotNewQuery
 	}
 
-	db := instance.getDB()
+	db := instance.GetDB()
 	rows, err := db.QueryContext(ctx,
 		query)
 	if err != nil {

@@ -101,7 +101,7 @@ var (
 )
 
 func (PGStatIOUserTablesCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.getDB()
+	db := instance.GetDB()
 	rows, err := db.QueryContext(ctx,
 		statioUserTablesQuery)
 

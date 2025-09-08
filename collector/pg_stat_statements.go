@@ -189,7 +189,7 @@ func (c PGStatStatementsCollector) Update(ctx context.Context, instance *Instanc
 	}
 	query := fmt.Sprintf(queryTemplate, querySelect)
 
-	db := instance.getDB()
+	db := instance.GetDB()
 	rows, err := db.QueryContext(ctx, query)
 
 	var presentQueryIds = make(map[string]struct{})

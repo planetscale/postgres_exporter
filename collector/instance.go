@@ -17,20 +17,23 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/blang/semver/v4"
 )
 
 type Instance struct {
-	dsn     string
-	db      *sql.DB
-	version semver.Version
-	closeDB bool // whether we should close the connection on Close()
+	dsn              string
+	db               *sql.DB
+	version          semver.Version
+	closeDB          bool          // whether we should close the connection on Close()
+	statementTimeout time.Duration // statement timeout for queries (0 = no timeout)
 }
 
-func NewInstance(dsn string) (*Instance, error) {
+func NewInstance(dsn string, statementTimeout time.Duration) (*Instance, error) {
 	i := &Instance{
-		dsn: dsn,
+		dsn:              dsn,
+		statementTimeout: statementTimeout,
 	}
 
 	// "Create" a database handle to verify the DSN provided is valid.
@@ -47,7 +50,8 @@ func NewInstance(dsn string) (*Instance, error) {
 // copy returns a copy of the instance.
 func (i *Instance) copy() *Instance {
 	return &Instance{
-		dsn: i.dsn,
+		dsn:              i.dsn,
+		statementTimeout: i.statementTimeout,
 	}
 }
 
@@ -60,6 +64,16 @@ func (i *Instance) setup() error {
 	db.SetMaxIdleConns(1)
 	i.db = db
 	i.closeDB = true // we created this connection, so we should close it
+
+	// Apply statement timeout if configured
+	if i.statementTimeout > 0 {
+		timeoutMs := int(i.statementTimeout.Milliseconds())
+		_, err = i.db.Exec(fmt.Sprintf("SET statement_timeout = %d", timeoutMs))
+		if err != nil {
+			i.db.Close()
+			return fmt.Errorf("failed to set statement timeout: %w", err)
+		}
+	}
 
 	version, err := queryVersion(i.db)
 	if err != nil {
@@ -75,6 +89,16 @@ func (i *Instance) SetupWithConnection(db *sql.DB) error {
 	i.db = db
 	i.closeDB = false // we're borrowing this connection, don't close it
 
+	// Apply statement timeout if configured
+	// Note: This sets it at the session level for the shared connection
+	if i.statementTimeout > 0 {
+		timeoutMs := int(i.statementTimeout.Milliseconds())
+		_, err := i.db.Exec(fmt.Sprintf("SET statement_timeout = %d", timeoutMs))
+		if err != nil {
+			return fmt.Errorf("failed to set statement timeout: %w", err)
+		}
+	}
+
 	version, err := queryVersion(i.db)
 	if err != nil {
 		return fmt.Errorf("error querying postgresql version: %w", err)
@@ -83,7 +107,7 @@ func (i *Instance) SetupWithConnection(db *sql.DB) error {
 	return nil
 }
 
-func (i *Instance) getDB() *sql.DB {
+func (i *Instance) GetDB() *sql.DB {
 	return i.db
 }
 
@@ -131,7 +155,7 @@ type InstanceFactory func() (*Instance, error)
 func InstanceFactoryFromTemplate(template *Instance) InstanceFactory {
 	return func() (*Instance, error) {
 		inst := template.copy()
-		err := inst.setup() // Creates new connection, sets closeDB=true
+		err := inst.setup()
 		if err != nil {
 			return nil, err
 		}

@@ -57,7 +57,7 @@ func NewProbeCollector(logger *slog.Logger, excludeDatabases []string, registry 
 		}
 	}
 
-	instance, err := NewInstance(dsn.GetConnectionString())
+	instance, err := NewInstance(dsn.GetConnectionString(), 0) // TODO: Make statement timeout configurable for probe
 	if err != nil {
 		return nil, err
 	}
