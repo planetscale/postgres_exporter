@@ -89,7 +89,7 @@ var (
 // Update implements Collector and exposes database locks.
 // It is called by the Prometheus registry when collecting metrics.
 func (c PGLocksCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.GetDB()
+	db := instance.getDB()
 	// Query the list of databases
 	rows, err := db.QueryContext(ctx,
 		pgLocksQuery,

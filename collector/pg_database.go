@@ -77,7 +77,7 @@ var (
 // list of databases in the query because the list of excluded
 // databases is dynamic.
 func (c PGDatabaseCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.GetDB()
+	db := instance.getDB()
 	// Query the list of databases
 	rows, err := db.QueryContext(ctx,
 		pgDatabaseQuery,

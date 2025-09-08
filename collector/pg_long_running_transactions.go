@@ -62,7 +62,7 @@ AND pid <> pg_backend_pid();
 )
 
 func (PGLongRunningTransactionsCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.GetDB()
+	db := instance.getDB()
 	rows, err := db.QueryContext(ctx,
 		longRunningTransactionsQuery)
 

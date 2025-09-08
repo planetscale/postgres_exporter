@@ -48,7 +48,7 @@ var (
 )
 
 func (c *PGPostmasterCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.GetDB()
+	db := instance.getDB()
 	row := db.QueryRowContext(ctx,
 		pgPostmasterQuery)
 

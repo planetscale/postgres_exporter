@@ -96,7 +96,7 @@ func (c BuffercacheSummaryCollector) Update(ctx context.Context, instance *Insta
 	if !instance.version.GE(semver.MustParse("16.0.0")) {
 		return nil
 	}
-	db := instance.GetDB()
+	db := instance.getDB()
 	rows, err := db.QueryContext(ctx, buffercacheQuery)
 	if err != nil {
 		return err

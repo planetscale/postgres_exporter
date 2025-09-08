@@ -52,7 +52,7 @@ var (
 )
 
 func (c PGXlogLocationCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.GetDB()
+	db := instance.getDB()
 
 	// xlog was renmaed to WAL in PostgreSQL 10
 	// https://wiki.postgresql.org/wiki/New_in_postgres_10#Renaming_of_.22xlog.22_to_.22wal.22_Globally_.28and_location.2Flsn.29

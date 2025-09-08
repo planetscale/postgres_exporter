@@ -107,7 +107,7 @@ func (i *Instance) SetupWithConnection(db *sql.DB) error {
 	return nil
 }
 
-func (i *Instance) GetDB() *sql.DB {
+func (i *Instance) getDB() *sql.DB {
 	return i.db
 }
 

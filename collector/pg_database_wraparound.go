@@ -62,7 +62,7 @@ var (
 )
 
 func (c *PGDatabaseWraparoundCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
-	db := instance.GetDB()
+	db := instance.getDB()
 	rows, err := db.QueryContext(ctx,
 		databaseWraparoundQuery)
 
