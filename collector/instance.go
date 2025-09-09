@@ -14,6 +14,7 @@
 package collector
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"regexp"
@@ -66,13 +67,9 @@ func (i *Instance) setup() error {
 	i.closeDB = true // we created this connection, so we should close it
 
 	// Apply statement timeout if configured
-	if i.statementTimeout > 0 {
-		timeoutMs := int(i.statementTimeout.Milliseconds())
-		_, err = i.db.Exec(fmt.Sprintf("SET statement_timeout = %d", timeoutMs))
-		if err != nil {
-			i.db.Close()
-			return fmt.Errorf("failed to set statement timeout: %w", err)
-		}
+	if err := i.applyStatementTimeout(); err != nil {
+		i.db.Close()
+		return fmt.Errorf("failed to set statement timeout: %w", err)
 	}
 
 	version, err := queryVersion(i.db)
@@ -91,12 +88,8 @@ func (i *Instance) SetupWithConnection(db *sql.DB) error {
 
 	// Apply statement timeout if configured
 	// Note: This sets it at the session level for the shared connection
-	if i.statementTimeout > 0 {
-		timeoutMs := int(i.statementTimeout.Milliseconds())
-		_, err := i.db.Exec(fmt.Sprintf("SET statement_timeout = %d", timeoutMs))
-		if err != nil {
-			return fmt.Errorf("failed to set statement timeout: %w", err)
-		}
+	if err := i.applyStatementTimeout(); err != nil {
+		return fmt.Errorf("failed to set statement timeout: %w", err)
 	}
 
 	version, err := queryVersion(i.db)
@@ -118,10 +111,23 @@ func (i *Instance) Close() error {
 	return nil
 }
 
+func (i *Instance) applyStatementTimeout() error {
+	if i.statementTimeout > 0 {
+		timeoutMs := int(i.statementTimeout.Milliseconds())
+		ctx, cancel := context.WithTimeout(context.TODO(), i.statementTimeout)
+		defer cancel()
+		_, err := i.db.ExecContext(ctx, fmt.Sprintf("SET statement_timeout = %d", timeoutMs))
+		return err
+	}
+	return nil
+}
+
 // Regex used to get the "short-version" from the postgres version field.
 // The result of SELECT version() is something like "PostgreSQL 9.6.2 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 6.2.1 20160830, 64-bit"
-var versionRegex = regexp.MustCompile(`^\w+ ((\d+)(\.\d+)?(\.\d+)?)`)
-var serverVersionRegex = regexp.MustCompile(`^((\d+)(\.\d+)?(\.\d+)?)`)
+var (
+	versionRegex       = regexp.MustCompile(`^\w+ ((\d+)(\.\d+)?(\.\d+)?)`)
+	serverVersionRegex = regexp.MustCompile(`^((\d+)(\.\d+)?(\.\d+)?)`)
+)
 
 func queryVersion(db *sql.DB) (semver.Version, error) {
 	var version string
