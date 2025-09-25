@@ -22,7 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-const sharedPreloadLibrariesSubsystem = "shared_preload_libraries"
+const sharedPreloadLibrariesSubsystem = "settings"
 
 func init() {
 	registerCollector(sharedPreloadLibrariesSubsystem, defaultEnabled, NewPGSharedPreloadLibrariesCollector)
@@ -39,7 +39,7 @@ var (
 		prometheus.BuildFQName(
 			namespace,
 			sharedPreloadLibrariesSubsystem,
-			"library_enabled",
+			"shared_preload_library_enabled",
 		),
 		"Whether a library is listed in shared_preload_libraries (1=yes).",
 		[]string{"library"}, nil,
