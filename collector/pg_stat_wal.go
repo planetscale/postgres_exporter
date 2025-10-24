@@ -103,7 +103,7 @@ func statWALQuery(columns []string) string {
 	return fmt.Sprintf("SELECT %s FROM pg_stat_wal;", strings.Join(columns, ","))
 }
 
-func (c *PGStatWALCollector) Update(ctx context.Context, instance *instance, ch chan<- prometheus.Metric) error {
+func (c *PGStatWALCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
 	db := instance.getDB()
 
 	columns := []string{

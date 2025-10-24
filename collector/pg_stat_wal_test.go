@@ -30,7 +30,7 @@ func TestPGStatWALCollector(t *testing.T) {
 	}
 	defer db.Close()
 
-	inst := &instance{db: db}
+	inst := &Instance{db: db}
 
 	columns := []string{
 		"wal_records",      // bigint
@@ -93,7 +93,7 @@ func TestPGStatWALCollectorNullValues(t *testing.T) {
 	}
 	defer db.Close()
 
-	inst := &instance{db: db}
+	inst := &Instance{db: db}
 	columns := []string{
 		"wal_records",      // bigint
 		"wal_fpi",          // bigint
