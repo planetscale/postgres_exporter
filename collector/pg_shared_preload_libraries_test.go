@@ -99,6 +99,9 @@ func TestPGSharedPreloadLibrariesCollectorEmpty(t *testing.T) {
 			convey.So(expect, convey.ShouldResemble, m)
 		}
 	})
+	// Drain channel to wait for collector goroutine to finish
+	for range ch {
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}

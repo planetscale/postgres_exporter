@@ -52,14 +52,23 @@ func TestPostgresBinariesCollector(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"ts"}).AddRow(1700000003))
 
 	ch := make(chan prometheus.Metric)
+	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
 		c := PostgresBinariesCollector{}
-
-		if err := c.Update(context.Background(), inst, ch); err != nil {
-			t.Errorf("Error calling PostgresBinariesCollector.Update: %s", err)
-		}
+		errCh <- c.Update(context.Background(), inst, ch)
 	}()
+
+	// Collect all metrics from the channel
+	var metrics []MetricResult
+	for m := range ch {
+		metrics = append(metrics, readMetric(m))
+	}
+
+	// Check for errors from the goroutine
+	if err := <-errCh; err != nil {
+		t.Errorf("Error calling PostgresBinariesCollector.Update: %s", err)
+	}
 
 	expected := []MetricResult{
 		{labels: labelMap{}, value: 1700000001, metricType: dto.MetricType_GAUGE},
@@ -67,10 +76,7 @@ func TestPostgresBinariesCollector(t *testing.T) {
 		{labels: labelMap{}, value: 1700000003, metricType: dto.MetricType_GAUGE},
 	}
 	convey.Convey("Metrics comparison", t, func() {
-		for _, expect := range expected {
-			m := readMetric(<-ch)
-			convey.So(expect, convey.ShouldResemble, m)
-		}
+		convey.So(metrics, convey.ShouldResemble, expected)
 	})
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
@@ -102,24 +108,30 @@ func TestPostgresBinariesCollectorFunctionNotExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	ch := make(chan prometheus.Metric)
+	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
 		c := PostgresBinariesCollector{}
-
-		if err := c.Update(context.Background(), inst, ch); err != nil {
-			t.Errorf("Error calling PostgresBinariesCollector.Update: %s", err)
-		}
+		errCh <- c.Update(context.Background(), inst, ch)
 	}()
+
+	// Collect all metrics from the channel
+	var metrics []MetricResult
+	for m := range ch {
+		metrics = append(metrics, readMetric(m))
+	}
+
+	// Check for errors from the goroutine
+	if err := <-errCh; err != nil {
+		t.Errorf("Error calling PostgresBinariesCollector.Update: %s", err)
+	}
 
 	// Only one metric should be emitted
 	expected := []MetricResult{
 		{labels: labelMap{}, value: 1700000001, metricType: dto.MetricType_GAUGE},
 	}
 	convey.Convey("Metrics comparison", t, func() {
-		for _, expect := range expected {
-			m := readMetric(<-ch)
-			convey.So(expect, convey.ShouldResemble, m)
-		}
+		convey.So(metrics, convey.ShouldResemble, expected)
 	})
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
@@ -149,20 +161,27 @@ func TestPostgresBinariesCollectorNoFunctionsExist(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	ch := make(chan prometheus.Metric)
+	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
 		c := PostgresBinariesCollector{}
-
-		err := c.Update(context.Background(), inst, ch)
-		if err != ErrNoData {
-			t.Errorf("Expected ErrNoData, got: %v", err)
-		}
+		errCh <- c.Update(context.Background(), inst, ch)
 	}()
 
-	// No metrics should be emitted, channel should close
+	// Collect all metrics from the channel (should be none)
+	var metrics []MetricResult
+	for m := range ch {
+		metrics = append(metrics, readMetric(m))
+	}
+
+	// Check that we got ErrNoData
+	if err := <-errCh; err != ErrNoData {
+		t.Errorf("Expected ErrNoData, got: %v", err)
+	}
+
+	// No metrics should be emitted
 	convey.Convey("No metrics emitted", t, func() {
-		_, ok := <-ch
-		convey.So(ok, convey.ShouldBeFalse)
+		convey.So(metrics, convey.ShouldBeEmpty)
 	})
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
@@ -184,20 +203,27 @@ func TestPostgresBinariesCollectorConnectionError(t *testing.T) {
 		WillReturnError(fmt.Errorf("connection refused"))
 
 	ch := make(chan prometheus.Metric)
+	errCh := make(chan error, 1)
 	go func() {
 		defer close(ch)
 		c := PostgresBinariesCollector{}
-
-		err := c.Update(context.Background(), inst, ch)
-		if err == nil {
-			t.Errorf("Expected error, got nil")
-		}
+		errCh <- c.Update(context.Background(), inst, ch)
 	}()
+
+	// Collect all metrics from the channel (should be none)
+	var metrics []MetricResult
+	for m := range ch {
+		metrics = append(metrics, readMetric(m))
+	}
+
+	// Check that we got an error
+	if err := <-errCh; err == nil {
+		t.Errorf("Expected error, got nil")
+	}
 
 	// No metrics should be emitted
 	convey.Convey("No metrics emitted on error", t, func() {
-		_, ok := <-ch
-		convey.So(ok, convey.ShouldBeFalse)
+		convey.So(metrics, convey.ShouldBeEmpty)
 	})
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
