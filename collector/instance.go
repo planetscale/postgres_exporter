@@ -16,7 +16,9 @@ package collector
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/blang/semver/v4"
 )
@@ -87,6 +89,25 @@ func (i *Instance) getDB() *sql.DB {
 	return i.db
 }
 
+// ConnectToDatabase creates a new connection to a specific database using the same
+// credentials as this instance. The caller is responsible for closing the returned connection.
+func (i *Instance) ConnectToDatabase(dbName string) (*sql.DB, error) {
+	targetDSN, err := modifyDSNDatabase(i.dsn, dbName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to modify DSN for database %s: %w", dbName, err)
+	}
+
+	db, err := sql.Open("postgres", targetDSN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open connection to database %s: %w", dbName, err)
+	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	return db, nil
+}
+
 func (i *Instance) Close() error {
 	if i.closeDB {
 		return i.db.Close()
@@ -137,4 +158,37 @@ func InstanceFactoryFromTemplate(template *Instance) InstanceFactory {
 		}
 		return inst, nil
 	}
+}
+
+// Regex to detect key=value style DSN
+var dsnConnstringRe = regexp.MustCompile(`^ *[a-zA-Z0-9]+ *= *`)
+
+// modifyDSNDatabase creates a new DSN string targeting a different database.
+// Supports both URI-style (postgresql://...) and key=value style DSNs.
+func modifyDSNDatabase(dsn string, dbName string) (string, error) {
+	// Check if URI-style
+	if strings.HasPrefix(dsn, "postgresql://") || strings.HasPrefix(dsn, "postgres://") {
+		dsnURI, err := url.Parse(dsn)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse DSN as URI: %w", err)
+		}
+		dsnURI.Path = "/" + dbName
+		return dsnURI.String(), nil
+	}
+
+	// Check if key=value style
+	if dsnConnstringRe.MatchString(dsn) {
+		// Remove any existing dbname and append the new one
+		parts := strings.Fields(dsn)
+		var filtered []string
+		for _, part := range parts {
+			if !strings.HasPrefix(strings.ToLower(part), "dbname=") {
+				filtered = append(filtered, part)
+			}
+		}
+		filtered = append(filtered, fmt.Sprintf("dbname=%s", dbName))
+		return strings.Join(filtered, " "), nil
+	}
+
+	return "", fmt.Errorf("could not parse DSN format")
 }
