@@ -16,7 +16,9 @@ package collector
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/blang/semver/v4"
 )
@@ -121,6 +123,29 @@ func queryVersion(db *sql.DB) (semver.Version, error) {
 		return semver.ParseTolerant(submatches[1])
 	}
 	return semver.Version{}, fmt.Errorf("could not parse version from %q", version)
+}
+
+// connectionStringForDB returns a modified DSN pointing to a specific database.
+func (i *Instance) connectionStringForDB(datname string) (string, error) {
+	return replaceDatabaseInDSN(i.dsn, datname)
+}
+
+// replaceDatabaseInDSN handles both URL-format and key=value format DSNs.
+func replaceDatabaseInDSN(dsn, datname string) (string, error) {
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "", err
+		}
+		u.Path = "/" + datname
+		return u.String(), nil
+	}
+	// key=value format: replace or append dbname=
+	re := regexp.MustCompile(`\bdbname\s*=\s*('[^']*'|\S+)`)
+	if re.MatchString(dsn) {
+		return re.ReplaceAllString(dsn, "dbname="+datname), nil
+	}
+	return dsn + " dbname=" + datname, nil
 }
 
 // InstanceFactory creates instances for collectors to use
