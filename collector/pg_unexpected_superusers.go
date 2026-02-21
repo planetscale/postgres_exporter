@@ -64,16 +64,18 @@ var (
 		"pscale_admin": {},
 	}
 
-	pgUnexpectedSuperusersQuery = "SELECT rolname, 'direct'::text AS access_type FROM pg_roles WHERE rolsuper"
+	pgUnexpectedSuperusersQuery = "SELECT rolname, 'direct'::pg_catalog.text AS access_type FROM pg_catalog.pg_roles WHERE rolsuper"
 
 	pgUnexpectedSuperusersQueryPG16 = `WITH RECURSIVE superuser_chain AS (
-    SELECT oid, rolname, 'direct'::text AS access_type FROM pg_roles WHERE rolsuper
+    SELECT oid, rolname, 'direct'::pg_catalog.text AS access_type
+    FROM pg_catalog.pg_roles WHERE rolsuper
     UNION
-    SELECT r.oid, r.rolname, 'indirect'::text AS access_type
-    FROM pg_roles r
-    JOIN pg_auth_members m ON m.member = r.oid
-    JOIN superuser_chain s ON m.roleid = s.oid
-    WHERE NOT r.rolsuper AND (m.set_option = true OR m.admin_option = true)
+    SELECT r.oid, r.rolname, 'indirect'::pg_catalog.text AS access_type
+    FROM pg_catalog.pg_roles r
+    JOIN pg_catalog.pg_auth_members m ON m.member OPERATOR(pg_catalog.=) r.oid
+    JOIN superuser_chain s ON m.roleid OPERATOR(pg_catalog.=) s.oid
+    WHERE NOT r.rolsuper
+        AND (m.set_option OPERATOR(pg_catalog.=) true OR m.admin_option OPERATOR(pg_catalog.=) true)
 )
 SELECT rolname, access_type FROM superuser_chain`
 )
