@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/blang/semver/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/smartystreets/goconvey/convey"
@@ -29,11 +30,11 @@ func TestPGUnexpectedSuperusersCollectorNoUnexpected(t *testing.T) {
 	}
 	defer db.Close()
 
-	inst := &Instance{db: db}
+	inst := &Instance{db: db, version: semver.MustParse("15.0.0")}
 
 	mock.ExpectQuery(sanitizeQuery(pgUnexpectedSuperusersQuery)).
-		WillReturnRows(sqlmock.NewRows([]string{"rolname"}).
-			AddRow("pscale_admin"))
+		WillReturnRows(sqlmock.NewRows([]string{"rolname", "access_type"}).
+			AddRow("pscale_admin", "direct"))
 
 	ch := make(chan prometheus.Metric)
 	go func() {
@@ -65,13 +66,13 @@ func TestPGUnexpectedSuperusersCollectorWithUnexpected(t *testing.T) {
 	}
 	defer db.Close()
 
-	inst := &Instance{db: db}
+	inst := &Instance{db: db, version: semver.MustParse("15.0.0")}
 
 	mock.ExpectQuery(sanitizeQuery(pgUnexpectedSuperusersQuery)).
-		WillReturnRows(sqlmock.NewRows([]string{"rolname"}).
-			AddRow("pscale_admin").
-			AddRow("rogue_admin").
-			AddRow("another_bad_user"))
+		WillReturnRows(sqlmock.NewRows([]string{"rolname", "access_type"}).
+			AddRow("pscale_admin", "direct").
+			AddRow("rogue_admin", "direct").
+			AddRow("another_bad_user", "direct"))
 
 	ch := make(chan prometheus.Metric)
 	go func() {
@@ -83,8 +84,8 @@ func TestPGUnexpectedSuperusersCollectorWithUnexpected(t *testing.T) {
 	}()
 
 	expected := []MetricResult{
-		{labels: labelMap{"rolname": "rogue_admin"}, value: 1, metricType: dto.MetricType_GAUGE},
-		{labels: labelMap{"rolname": "another_bad_user"}, value: 1, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"rolname": "rogue_admin", "access_type": "direct"}, value: 1, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"rolname": "another_bad_user", "access_type": "direct"}, value: 1, metricType: dto.MetricType_GAUGE},
 		{labels: labelMap{}, value: 2, metricType: dto.MetricType_GAUGE},
 	}
 	convey.Convey("Unexpected superusers detected", t, func() {
@@ -105,10 +106,10 @@ func TestPGUnexpectedSuperusersCollectorNoSuperusers(t *testing.T) {
 	}
 	defer db.Close()
 
-	inst := &Instance{db: db}
+	inst := &Instance{db: db, version: semver.MustParse("15.0.0")}
 
 	mock.ExpectQuery(sanitizeQuery(pgUnexpectedSuperusersQuery)).
-		WillReturnRows(sqlmock.NewRows([]string{"rolname"}))
+		WillReturnRows(sqlmock.NewRows([]string{"rolname", "access_type"}))
 
 	ch := make(chan prometheus.Metric)
 	go func() {
@@ -123,6 +124,120 @@ func TestPGUnexpectedSuperusersCollectorNoSuperusers(t *testing.T) {
 		{labels: labelMap{}, value: 0, metricType: dto.MetricType_GAUGE},
 	}
 	convey.Convey("No superusers at all", t, func() {
+		for _, expect := range expected {
+			m := readMetric(<-ch)
+			convey.So(expect, convey.ShouldResemble, m)
+		}
+	})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestPGUnexpectedSuperusersCollectorIndirectPG16(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Error opening a stub db connection: %s", err)
+	}
+	defer db.Close()
+
+	inst := &Instance{db: db, version: semver.MustParse("16.0.0")}
+
+	mock.ExpectQuery(sanitizeQuery(pgUnexpectedSuperusersQueryPG16)).
+		WillReturnRows(sqlmock.NewRows([]string{"rolname", "access_type"}).
+			AddRow("pscale_admin", "direct").
+			AddRow("sneaky_user", "indirect"))
+
+	ch := make(chan prometheus.Metric)
+	go func() {
+		defer close(ch)
+		c := PGUnexpectedSuperusersCollector{}
+		if err := c.Update(context.Background(), inst, ch); err != nil {
+			t.Errorf("Error calling PGUnexpectedSuperusersCollector.Update: %s", err)
+		}
+	}()
+
+	expected := []MetricResult{
+		{labels: labelMap{"rolname": "sneaky_user", "access_type": "indirect"}, value: 1, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{}, value: 1, metricType: dto.MetricType_GAUGE},
+	}
+	convey.Convey("Indirect superuser detected on PG 16", t, func() {
+		for _, expect := range expected {
+			m := readMetric(<-ch)
+			convey.So(expect, convey.ShouldResemble, m)
+		}
+	})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestPGUnexpectedSuperusersCollectorMixedPG16(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Error opening a stub db connection: %s", err)
+	}
+	defer db.Close()
+
+	inst := &Instance{db: db, version: semver.MustParse("16.0.0")}
+
+	mock.ExpectQuery(sanitizeQuery(pgUnexpectedSuperusersQueryPG16)).
+		WillReturnRows(sqlmock.NewRows([]string{"rolname", "access_type"}).
+			AddRow("pscale_admin", "direct").
+			AddRow("rogue_admin", "direct").
+			AddRow("sneaky_user", "indirect"))
+
+	ch := make(chan prometheus.Metric)
+	go func() {
+		defer close(ch)
+		c := PGUnexpectedSuperusersCollector{}
+		if err := c.Update(context.Background(), inst, ch); err != nil {
+			t.Errorf("Error calling PGUnexpectedSuperusersCollector.Update: %s", err)
+		}
+	}()
+
+	expected := []MetricResult{
+		{labels: labelMap{"rolname": "rogue_admin", "access_type": "direct"}, value: 1, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"rolname": "sneaky_user", "access_type": "indirect"}, value: 1, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{}, value: 2, metricType: dto.MetricType_GAUGE},
+	}
+	convey.Convey("Mix of direct and indirect unexpected superusers on PG 16", t, func() {
+		for _, expect := range expected {
+			m := readMetric(<-ch)
+			convey.So(expect, convey.ShouldResemble, m)
+		}
+	})
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestPGUnexpectedSuperusersCollectorExpectedIndirectFilteredPG16(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("Error opening a stub db connection: %s", err)
+	}
+	defer db.Close()
+
+	inst := &Instance{db: db, version: semver.MustParse("16.0.0")}
+
+	mock.ExpectQuery(sanitizeQuery(pgUnexpectedSuperusersQueryPG16)).
+		WillReturnRows(sqlmock.NewRows([]string{"rolname", "access_type"}).
+			AddRow("pscale_admin", "indirect"))
+
+	ch := make(chan prometheus.Metric)
+	go func() {
+		defer close(ch)
+		c := PGUnexpectedSuperusersCollector{}
+		if err := c.Update(context.Background(), inst, ch); err != nil {
+			t.Errorf("Error calling PGUnexpectedSuperusersCollector.Update: %s", err)
+		}
+	}()
+
+	expected := []MetricResult{
+		{labels: labelMap{}, value: 0, metricType: dto.MetricType_GAUGE},
+	}
+	convey.Convey("Expected superuser filtered even when indirect", t, func() {
 		for _, expect := range expected {
 			m := readMetric(<-ch)
 			convey.So(expect, convey.ShouldResemble, m)
