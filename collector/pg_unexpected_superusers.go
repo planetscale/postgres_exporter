@@ -64,29 +64,45 @@ var (
 		"pscale_admin": {},
 	}
 
+	// pgLargeRolesThreshold is the number of roles above which the expensive recursive
+	// CTE for indirect superuser detection is skipped in favour of the simple query.
+	pgLargeRolesThreshold = 1000
+
+	pgRoleCountQuery = "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles"
+
 	pgUnexpectedSuperusersQuery = "SELECT rolname, 'direct'::pg_catalog.text AS access_type FROM pg_catalog.pg_roles WHERE rolsuper"
 
-	pgUnexpectedSuperusersQueryPG16 = `WITH RECURSIVE superuser_chain AS (
-    SELECT oid, rolname, 'direct'::pg_catalog.text AS access_type
-    FROM pg_catalog.pg_roles WHERE rolsuper
+	pgUnexpectedSuperusersQueryPG16 = `WITH RECURSIVE superuser_oids AS (
+    SELECT oid FROM pg_catalog.pg_roles WHERE rolsuper
     UNION
-    SELECT r.oid, r.rolname, 'indirect'::pg_catalog.text AS access_type
-    FROM pg_catalog.pg_roles r
-    JOIN pg_catalog.pg_auth_members m ON m.member OPERATOR(pg_catalog.=) r.oid
-    JOIN superuser_chain s ON m.roleid OPERATOR(pg_catalog.=) s.oid
-    WHERE NOT r.rolsuper
-        AND (m.set_option OPERATOR(pg_catalog.=) true OR m.admin_option OPERATOR(pg_catalog.=) true)
+    SELECT m.member
+    FROM pg_catalog.pg_auth_members m
+    JOIN superuser_oids s ON m.roleid OPERATOR(pg_catalog.=) s.oid
+    WHERE m.set_option OPERATOR(pg_catalog.=) true OR m.admin_option OPERATOR(pg_catalog.=) true
 )
-SELECT rolname, access_type FROM superuser_chain`
+SELECT r.rolname,
+    CASE WHEN r.rolsuper
+        THEN 'direct'::pg_catalog.text
+        ELSE 'indirect'::pg_catalog.text
+    END AS access_type
+FROM superuser_oids so
+JOIN pg_catalog.pg_roles r ON r.oid OPERATOR(pg_catalog.=) so.oid`
 )
 
 func (c PGUnexpectedSuperusersCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
+	db := instance.getDB()
+
 	query := pgUnexpectedSuperusersQuery
 	if instance.version.GTE(semver.MustParse("16.0.0")) {
-		query = pgUnexpectedSuperusersQueryPG16
+		var roleCount int
+		if err := db.QueryRowContext(ctx, pgRoleCountQuery).Scan(&roleCount); err != nil {
+			return err
+		}
+		if roleCount < pgLargeRolesThreshold {
+			query = pgUnexpectedSuperusersQueryPG16
+		}
 	}
 
-	db := instance.getDB()
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return err
