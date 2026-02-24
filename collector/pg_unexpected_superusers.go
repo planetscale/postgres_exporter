@@ -18,6 +18,7 @@ import (
 	"database/sql"
 	"log/slog"
 
+	"github.com/blang/semver/v4"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -55,7 +56,7 @@ var (
 			"role",
 		),
 		"Unexpected superuser role (value is always 1)",
-		[]string{"rolname"}, nil,
+		[]string{"rolname", "access_type"}, nil,
 	)
 
 	// Roles that are expected to have superuser privileges.
@@ -63,12 +64,46 @@ var (
 		"pscale_admin": {},
 	}
 
-	pgUnexpectedSuperusersQuery = "SELECT rolname FROM pg_roles WHERE rolsuper"
+	// pgLargeRolesThreshold is the number of roles above which the expensive recursive
+	// CTE for indirect superuser detection is skipped in favour of the simple query.
+	pgLargeRolesThreshold = 1000
+
+	pgRoleCountQuery = "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles"
+
+	pgUnexpectedSuperusersQuery = "SELECT rolname, 'direct'::pg_catalog.text AS access_type FROM pg_catalog.pg_roles WHERE rolsuper"
+
+	pgUnexpectedSuperusersQueryPG16 = `WITH RECURSIVE superuser_oids AS (
+    SELECT oid FROM pg_catalog.pg_roles WHERE rolsuper
+    UNION
+    SELECT m.member
+    FROM pg_catalog.pg_auth_members m
+    JOIN superuser_oids s ON m.roleid OPERATOR(pg_catalog.=) s.oid
+    WHERE m.set_option OPERATOR(pg_catalog.=) true OR m.admin_option OPERATOR(pg_catalog.=) true
+)
+SELECT r.rolname,
+    CASE WHEN r.rolsuper
+        THEN 'direct'::pg_catalog.text
+        ELSE 'indirect'::pg_catalog.text
+    END AS access_type
+FROM superuser_oids so
+JOIN pg_catalog.pg_roles r ON r.oid OPERATOR(pg_catalog.=) so.oid`
 )
 
 func (c PGUnexpectedSuperusersCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
 	db := instance.getDB()
-	rows, err := db.QueryContext(ctx, pgUnexpectedSuperusersQuery)
+
+	query := pgUnexpectedSuperusersQuery
+	if instance.version.GTE(semver.MustParse("16.0.0")) {
+		var roleCount int
+		if err := db.QueryRowContext(ctx, pgRoleCountQuery).Scan(&roleCount); err != nil {
+			return err
+		}
+		if roleCount < pgLargeRolesThreshold {
+			query = pgUnexpectedSuperusersQueryPG16
+		}
+	}
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -77,7 +112,8 @@ func (c PGUnexpectedSuperusersCollector) Update(ctx context.Context, instance *I
 	var count float64
 	for rows.Next() {
 		var rolname sql.NullString
-		if err := rows.Scan(&rolname); err != nil {
+		var accessType sql.NullString
+		if err := rows.Scan(&rolname, &accessType); err != nil {
 			return err
 		}
 
@@ -89,10 +125,15 @@ func (c PGUnexpectedSuperusersCollector) Update(ctx context.Context, instance *I
 			continue
 		}
 
+		accessTypeLabel := "direct"
+		if accessType.Valid {
+			accessTypeLabel = accessType.String
+		}
+
 		count++
 		ch <- prometheus.MustNewConstMetric(
 			pgUnexpectedSuperuserDesc,
-			prometheus.GaugeValue, 1, rolname.String,
+			prometheus.GaugeValue, 1, rolname.String, accessTypeLabel,
 		)
 	}
 
