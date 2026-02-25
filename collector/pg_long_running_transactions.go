@@ -15,6 +15,7 @@ package collector
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -36,9 +37,9 @@ func NewPGLongRunningTransactionsCollector(config collectorConfig) (Collector, e
 
 var (
 	longRunningTransactionsCount = prometheus.NewDesc(
-		"pg_long_running_transactions",
-		"Current number of long running transactions",
-		[]string{},
+		prometheus.BuildFQName(namespace, "", longRunningTransactionsSubsystem),
+		"Number of transactions running longer than threshold",
+		[]string{"threshold"},
 		prometheus.Labels{},
 	)
 
@@ -50,46 +51,70 @@ var (
 	)
 
 	longRunningTransactionsQuery = `
-	SELECT                                                              
-    COUNT(*) as transactions,
-    MAX(EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start)) AS oldest_timestamp_seconds
-FROM pg_catalog.pg_stat_activity
-WHERE state IS DISTINCT FROM 'idle'
-AND query NOT LIKE 'autovacuum:%'
-AND pg_stat_activity.xact_start IS NOT NULL;
+		WITH transaction_ages AS (
+			SELECT EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start) AS age_seconds
+			FROM pg_catalog.pg_stat_activity
+			WHERE state IS DISTINCT FROM 'idle'
+			AND query NOT LIKE 'autovacuum:%'
+			AND pg_stat_activity.xact_start IS NOT NULL
+		)
+		SELECT
+			COUNT(*) FILTER (WHERE age_seconds >= 60) AS count_60s,
+			COUNT(*) FILTER (WHERE age_seconds >= 300) AS count_300s,
+			COUNT(*) FILTER (WHERE age_seconds >= 600) AS count_600s,
+			COUNT(*) FILTER (WHERE age_seconds >= 1800) AS count_1800s,
+			MAX(age_seconds) AS oldest_timestamp_seconds
+		FROM transaction_ages;
 	`
 )
 
 func (PGLongRunningTransactionsCollector) Update(ctx context.Context, instance *Instance, ch chan<- prometheus.Metric) error {
 	db := instance.getDB()
-	rows, err := db.QueryContext(ctx,
-		longRunningTransactionsQuery)
 
+	var count60s, count300s, count600s, count1800s float64
+	var maxAge sql.NullFloat64
+
+	err := db.QueryRowContext(ctx, longRunningTransactionsQuery).Scan(
+		&count60s,
+		&count300s,
+		&count600s,
+		&count1800s,
+		&maxAge,
+	)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var transactions, ageInSeconds float64
+	// Emit count metrics with threshold labels
+	thresholds := []struct {
+		threshold string
+		count     float64
+	}{
+		{"60", count60s},
+		{"300", count300s},
+		{"600", count600s},
+		{"1800", count1800s},
+	}
 
-		if err := rows.Scan(&transactions, &ageInSeconds); err != nil {
-			return err
-		}
-
+	for _, t := range thresholds {
 		ch <- prometheus.MustNewConstMetric(
 			longRunningTransactionsCount,
 			prometheus.GaugeValue,
-			transactions,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			longRunningTransactionsAgeInSeconds,
-			prometheus.GaugeValue,
-			ageInSeconds,
+			t.count,
+			t.threshold,
 		)
 	}
-	if err := rows.Err(); err != nil {
-		return err
+
+	// Emit max age metric
+	ageValue := 0.0
+	if maxAge.Valid {
+		ageValue = maxAge.Float64
 	}
+	ch <- prometheus.MustNewConstMetric(
+		longRunningTransactionsAgeInSeconds,
+		prometheus.GaugeValue,
+		ageValue,
+	)
+
 	return nil
 }

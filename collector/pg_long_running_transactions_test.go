@@ -30,11 +30,14 @@ func TestPGLongRunningTransactionsCollector(t *testing.T) {
 	defer db.Close()
 	inst := &Instance{db: db}
 	columns := []string{
-		"transactions",
-		"age_in_seconds",
+		"count_60s",
+		"count_300s",
+		"count_600s",
+		"count_1800s",
+		"oldest_timestamp_seconds",
 	}
 	rows := sqlmock.NewRows(columns).
-		AddRow(20, 1200)
+		AddRow(5, 3, 2, 1, 1200)
 
 	mock.ExpectQuery(sanitizeQuery(longRunningTransactionsQuery)).WillReturnRows(rows)
 
@@ -48,7 +51,10 @@ func TestPGLongRunningTransactionsCollector(t *testing.T) {
 		}
 	}()
 	expected := []MetricResult{
-		{labels: labelMap{}, value: 20, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"threshold": "60"}, value: 5, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"threshold": "300"}, value: 3, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"threshold": "600"}, value: 2, metricType: dto.MetricType_GAUGE},
+		{labels: labelMap{"threshold": "1800"}, value: 1, metricType: dto.MetricType_GAUGE},
 		{labels: labelMap{}, value: 1200, metricType: dto.MetricType_GAUGE},
 	}
 	convey.Convey("Metrics comparison", t, func() {
