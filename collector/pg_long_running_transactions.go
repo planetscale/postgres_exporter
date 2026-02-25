@@ -37,7 +37,7 @@ func NewPGLongRunningTransactionsCollector(config collectorConfig) (Collector, e
 
 var (
 	longRunningTransactionsCount = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, longRunningTransactionsSubsystem, "count"),
+		prometheus.BuildFQName(namespace, "", longRunningTransactionsSubsystem),
 		"Number of transactions running longer than threshold",
 		[]string{"threshold"},
 		prometheus.Labels{},
@@ -51,16 +51,20 @@ var (
 	)
 
 	longRunningTransactionsQuery = `
+		WITH transaction_ages AS (
+			SELECT EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start) AS age_seconds
+			FROM pg_catalog.pg_stat_activity
+			WHERE state IS DISTINCT FROM 'idle'
+			AND query NOT LIKE 'autovacuum:%'
+			AND pg_stat_activity.xact_start IS NOT NULL
+		)
 		SELECT
-			COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start) >= 60) AS count_60s,
-			COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start) >= 300) AS count_300s,
-			COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start) >= 600) AS count_600s,
-			COUNT(*) FILTER (WHERE EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start) >= 1800) AS count_1800s,
-			MAX(EXTRACT(EPOCH FROM clock_timestamp() - pg_stat_activity.xact_start)) AS oldest_timestamp_seconds
-		FROM pg_catalog.pg_stat_activity
-		WHERE state IS DISTINCT FROM 'idle'
-		AND query NOT LIKE 'autovacuum:%'
-		AND pg_stat_activity.xact_start IS NOT NULL;
+			COUNT(*) FILTER (WHERE age_seconds >= 60) AS count_60s,
+			COUNT(*) FILTER (WHERE age_seconds >= 300) AS count_300s,
+			COUNT(*) FILTER (WHERE age_seconds >= 600) AS count_600s,
+			COUNT(*) FILTER (WHERE age_seconds >= 1800) AS count_1800s,
+			MAX(age_seconds) AS oldest_timestamp_seconds
+		FROM transaction_ages;
 	`
 )
 
@@ -82,30 +86,24 @@ func (PGLongRunningTransactionsCollector) Update(ctx context.Context, instance *
 	}
 
 	// Emit count metrics with threshold labels
-	ch <- prometheus.MustNewConstMetric(
-		longRunningTransactionsCount,
-		prometheus.GaugeValue,
-		count60s,
-		"60",
-	)
-	ch <- prometheus.MustNewConstMetric(
-		longRunningTransactionsCount,
-		prometheus.GaugeValue,
-		count300s,
-		"300",
-	)
-	ch <- prometheus.MustNewConstMetric(
-		longRunningTransactionsCount,
-		prometheus.GaugeValue,
-		count600s,
-		"600",
-	)
-	ch <- prometheus.MustNewConstMetric(
-		longRunningTransactionsCount,
-		prometheus.GaugeValue,
-		count1800s,
-		"1800",
-	)
+	thresholds := []struct {
+		threshold string
+		count     float64
+	}{
+		{"60", count60s},
+		{"300", count300s},
+		{"600", count600s},
+		{"1800", count1800s},
+	}
+
+	for _, t := range thresholds {
+		ch <- prometheus.MustNewConstMetric(
+			longRunningTransactionsCount,
+			prometheus.GaugeValue,
+			t.count,
+			t.threshold,
+		)
+	}
 
 	// Emit max age metric
 	ageValue := 0.0
