@@ -30,6 +30,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate version tag
+        id: version
+        run: |
+          # Read major.minor from VERSION file
+          VERSION=$(cat VERSION)
+          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+          # Get current date in yyyymmdd format
+          DATE=$(date +%Y%m%d)
+          # Get short SHA (7 chars)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          # Construct the tag: maj.min-yyyymmdd-sha7
+          VERSION_TAG="${MAJOR_MINOR}-${DATE}-${SHORT_SHA}"
+          echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+
       - id: meta
         name: Extract metadata (tags, labels) for Docker
         uses: docker/metadata-action@v5
@@ -37,7 +51,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=sha
+            type=raw,value=${{ steps.version.outputs.tag }}
 
       # setup qemu and buildx for cross-builds (arm64)
       - name: Set up QEMU (for arm64 builds)
